@@ -1,0 +1,5 @@
+Tanggal *;Unit *;Sopir *;Customer *;Rute *;No Tiket *;Tonase *;Status;Catatan
+08/10/2026;DT 1501;Awanda;WHL;BSR - 107;CE261008000101;45,12;;Contoh import
+08/10/2026;DT 1502;Syahrul;WHL;BSR - 107;CE261008000102;46,30;;
+08/10/2026;DT 1505;Ponijan;WHL;BSR - 107;CE261008000103;44,87;;
+08/10/2026;DT 1599;Ponijan;WHL;BSR - 107;CE261008000104;44,10;;Baris ini sengaja salah (unit tidak ada)
