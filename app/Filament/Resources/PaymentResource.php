@@ -40,11 +40,15 @@ class PaymentResource extends Resource
     {
         return $form->schema([
             Forms\Components\Select::make('invoice_id')->label('Invoice')
-                ->options(fn () => Invoice::with('customer')->where('status', '!=', 'lunas')->get()
+                ->options(fn (?Payment $record) => Invoice::with('customer')
+                    ->where(fn ($q) => $q->open()->when($record, fn ($x) => $x->orWhere('id', $record->invoice_id)))->get()
                     ->mapWithKeys(fn (Invoice $i) => [$i->id => $i->number.' · '.$i->customer->name.' · sisa Rp '.number_format($i->outstanding, 0, ',', '.')]))
                 ->searchable()->required()->live(),
             Forms\Components\DatePicker::make('paid_at')->label('Tanggal bayar')->default(now())->required()->native(false),
             Forms\Components\TextInput::make('amount')->label('Jumlah')->numeric()->prefix('Rp')->required()
+                ->minValue(1)
+                ->maxValue(fn (Get $get, ?Payment $record) => Payment::maxAmount(Invoice::find($get('invoice_id')), $record))
+                ->validationMessages(['max' => 'Melebihi sisa tagihan invoice (Rp :max).'])
                 ->placeholder(fn (Get $get) => $get('invoice_id') ? number_format(Invoice::find($get('invoice_id'))?->outstanding ?? 0, 0, ',', '.') : null),
             Forms\Components\Select::make('method')->label('Metode')->options(Payment::METHODS)->default('transfer')->required(),
             Forms\Components\TextInput::make('reference')->label('No referensi / bukti'),

@@ -36,7 +36,7 @@ class HppPerTonChart extends ChartWidget
             'datasets' => [[
                 'label' => 'HPP/ton',
                 'data' => $rows->map(fn ($r) => round($r['hpp_per_ton']))->all(),
-                'backgroundColor' => $rows->map(fn ($r) => $r['hpp_per_ton'] > $avg ? '#E07B2E' : '#94A3B8')->all(),
+                'backgroundColor' => $rows->map(fn ($r) => $r['hpp_per_ton'] > $avg ? '#D97706' : '#A1A1AA')->all(),
                 'borderRadius' => 4,
             ]],
         ];

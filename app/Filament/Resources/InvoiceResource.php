@@ -5,6 +5,7 @@ namespace App\Filament\Resources;
 use App\Filament\Concerns\HasRoleAccess;
 use App\Filament\Resources\InvoiceResource\Pages;
 use App\Filament\Resources\InvoiceResource\RelationManagers;
+use App\Models\Customer;
 use App\Models\Invoice;
 use App\Support\HaulingMetrics as M;
 use Closure;
@@ -13,6 +14,7 @@ use Filament\Forms\Form;
 use Filament\Forms\Get;
 use Filament\Infolists;
 use Filament\Infolists\Infolist;
+use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
@@ -42,15 +44,21 @@ class InvoiceResource extends Resource
 
     protected static ?string $recordTitleAttribute = 'number';
 
-    /** Invoice tidak diedit setelah terbit; batalkan (hapus) lalu buat ulang. */
+    /** Invoice tidak diedit setelah terbit; batalkan lalu buat ulang. */
     public static function canEdit(Model $record): bool
     {
         return false;
     }
 
+    /** Invoice tidak pernah dihapus agar nomor dan jejaknya tetap ada; gunakan aksi Batalkan. */
     public static function canDelete(Model $record): bool
     {
-        return static::allows('cancel') && (float) $record->paid_amount <= 0;
+        return false;
+    }
+
+    public static function canCancel(Invoice $record): bool
+    {
+        return static::allows('cancel') && $record->status !== 'batal' && (float) $record->paid_amount <= 0;
     }
 
     public static function canDeleteAny(): bool
@@ -65,6 +73,11 @@ class InvoiceResource extends Resource
                 ->columns(2)->schema([
                     Forms\Components\Select::make('customer_id')->label('Customer')
                         ->relationship('customer', 'name')->searchable()->preload()->required()->live()
+                        ->afterStateUpdated(function ($state, Forms\Set $set) {
+                            foreach (Invoice::defaultTaxes(Customer::find($state)) as $field => $value) {
+                                $set($field, $value);
+                            }
+                        })
                         ->columnSpanFull(),
                     Forms\Components\DatePicker::make('period_from')->label('Periode dari')->required()->native(false)
                         ->default(now()->startOfMonth())->live(),
@@ -78,10 +91,12 @@ class InvoiceResource extends Resource
                             },
                         ]),
                     Forms\Components\DatePicker::make('issue_date')->label('Tanggal invoice')->required()->native(false)->default(now()),
-                    Forms\Components\TextInput::make('ppn_percent')->label('PPN')->numeric()->suffix('%')->default(0)->live(onBlur: true)
-                        ->helperText('Isi sesuai ketentuan pajak yang berlaku.'),
+                    Forms\Components\TextInput::make('ppn_percent')->label('PPN')->numeric()->suffix('%')
+                        ->default(fn () => Invoice::defaultTaxes(null)['ppn_percent'])->live(onBlur: true)
+                        ->helperText('Terisi otomatis; ubah bila ketentuan berbeda.'),
                     Forms\Components\TextInput::make('pph_percent')->label('PPh 23 (dipotong customer)')->numeric()->suffix('%')
-                        ->default(0)->live(onBlur: true),
+                        ->default(0)->live(onBlur: true)
+                        ->helperText('Terisi otomatis untuk customer PKP.'),
                     Forms\Components\Textarea::make('notes')->label('Catatan')->rows(2)->columnSpanFull(),
                 ]),
             Forms\Components\Section::make('Ringkasan')->icon('heroicon-o-calculator')
@@ -102,8 +117,8 @@ class InvoiceResource extends Resource
         $count = (clone $q)->count();
         $ton = (float) (clone $q)->sum('tonnage');
         $sub = (float) (clone $q)->sum('amount');
-        $ppn = $sub * (float) $get('ppn_percent') / 100;
-        $pph = $sub * (float) $get('pph_percent') / 100;
+        $ppn = Invoice::tax($sub, (float) $get('ppn_percent'));
+        $pph = Invoice::tax($sub, (float) $get('pph_percent'));
 
         $row = fn ($l, $v, $b = false) => '<div style="display:flex;justify-content:space-between;padding:5px 0;'
             .($b ? 'font-weight:700;border-top:1px solid rgba(120,113,108,.3);margin-top:6px;padding-top:9px' : '').'"><span>'
@@ -130,10 +145,11 @@ class InvoiceResource extends Resource
                     ->formatStateUsing(fn (Invoice $record) => $record->period_from->format('d M').' – '.$record->period_to->format('d M Y')),
                 Tables\Columns\TextColumn::make('trip_count')->label('Trip')->alignEnd()->toggleable(),
                 Tables\Columns\TextColumn::make('total')->label('Total')->money('IDR', locale: 'id')->alignEnd()
-                    ->summarize(Tables\Columns\Summarizers\Sum::make()->money('IDR', locale: 'id')),
+                    ->summarize(Tables\Columns\Summarizers\Sum::make()->label('Total (tanpa batal)')->money('IDR', locale: 'id')
+                        ->query(fn ($query) => $query->where('status', '!=', 'batal'))),
                 Tables\Columns\TextColumn::make('paid_amount')->label('Dibayar')->money('IDR', locale: 'id')->alignEnd()->toggleable(),
                 Tables\Columns\TextColumn::make('due_date')->label('Jatuh tempo')->date('d M Y')
-                    ->color(fn (Invoice $record) => $record->status !== 'lunas' && $record->due_date->isPast() ? 'danger' : null),
+                    ->color(fn (Invoice $record) => in_array($record->status, ['belum_lunas', 'sebagian'], true) && $record->due_date->isPast() ? 'danger' : null),
                 Tables\Columns\TextColumn::make('status')->badge()
                     ->formatStateUsing(fn ($state) => Invoice::STATUSES[$state] ?? $state)
                     ->color(fn ($state) => Invoice::STATUS_COLORS[$state] ?? 'gray'),
@@ -144,10 +160,25 @@ class InvoiceResource extends Resource
             ])
             ->actions([
                 Tables\Actions\ViewAction::make(),
-                Tables\Actions\DeleteAction::make()->label('Batalkan')
-                    ->modalDescription('Trip di invoice ini akan kembali berstatus VERIFIED.')
-                    ->before(fn (Invoice $record) => $record->trips()->update(['status' => 'verified', 'invoice_id' => null])),
+                static::cancelAction(Tables\Actions\Action::make('cancel')),
             ]);
+    }
+
+    /** Aksi Batalkan, dipakai di tabel dan halaman detail. */
+    public static function cancelAction($action)
+    {
+        return $action->label('Batalkan')->icon('heroicon-o-x-circle')->color('danger')
+            ->visible(fn (Invoice $record) => static::canCancel($record))
+            ->requiresConfirmation()
+            ->modalHeading(fn (Invoice $record) => "Batalkan {$record->number}?")
+            ->modalDescription('Trip di invoice ini kembali berstatus VERIFIED dan bisa ditagih ulang. Nomor invoice tetap tercatat sebagai Batal.')
+            ->form([
+                Forms\Components\TextInput::make('reason')->label('Alasan pembatalan')->required()->maxLength(255),
+            ])
+            ->action(function (Invoice $record, array $data) {
+                $record->cancel($data['reason']);
+                Notification::make()->success()->title("{$record->number} dibatalkan")->send();
+            });
     }
 
     public static function infolist(Infolist $infolist): Infolist
@@ -169,6 +200,13 @@ class InvoiceResource extends Resource
                     ->formatStateUsing(fn ($state) => Invoice::STATUSES[$state] ?? $state)
                     ->color(fn ($state) => Invoice::STATUS_COLORS[$state] ?? 'gray'),
             ]),
+            Infolists\Components\Section::make('Pembatalan')->columns(['default' => 1, 'md' => 3])
+                ->visible(fn (Invoice $record) => $record->status === 'batal')
+                ->schema([
+                    Infolists\Components\TextEntry::make('cancelled_at')->label('Dibatalkan')->dateTime('d M Y H:i'),
+                    Infolists\Components\TextEntry::make('cancelledBy.name')->label('Oleh'),
+                    Infolists\Components\TextEntry::make('cancel_reason')->label('Alasan'),
+                ]),
         ]);
     }
 

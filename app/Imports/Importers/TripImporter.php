@@ -34,6 +34,7 @@ class TripImporter extends BaseImporter
             'kode_rute' => 'rute', 'route' => 'rute',
             'tiket' => 'no_tiket', 'nomor_tiket' => 'no_tiket', 'no_tiket_timbang' => 'no_tiket', 'ticket' => 'no_tiket',
             'netto' => 'tonase', 'tonase_netto' => 'tonase', 'berat' => 'tonase', 'berat_netto' => 'tonase', 'ton' => 'tonase',
+            'solar' => 'solar_aktual', 'liter_solar' => 'solar_aktual', 'bbm' => 'solar_aktual',
         ];
     }
 
@@ -48,6 +49,7 @@ class TripImporter extends BaseImporter
             'no_tiket' => ['No Tiket', true, 'CE261003175907', 'Unik'],
             'tonase' => ['Tonase', true, '46,64', 'Ton netto'],
             'status' => ['Status', false, 'draft', 'draft / verified (default draft)'],
+            'solar_aktual' => ['Solar Aktual', false, '', 'Liter, bila ada data pengisian'],
             'catatan' => ['Catatan', false, '', ''],
         ];
     }
@@ -92,6 +94,7 @@ class TripImporter extends BaseImporter
             'customer_id' => $customer->id,
             'haul_route_id' => $route->id,
             'tonnage' => round($ton, 2),
+            'fuel_actual_liters' => filled($row['solar_aktual'] ?? null) ? round(static::num($row['solar_aktual'], 'Solar aktual'), 2) : $trip?->fuel_actual_liters,
             'status' => $status,
             'notes' => static::str($row['catatan'] ?? null),
         ]);

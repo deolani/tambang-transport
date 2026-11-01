@@ -11,6 +11,7 @@ use Filament\Panel;
 use Filament\PanelProvider;
 use Filament\Support\Colors\Color;
 use Filament\Support\Enums\MaxWidth;
+use Filament\Enums\ThemeMode;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
@@ -30,14 +31,16 @@ class AdminPanelProvider extends PanelProvider
             ->brandName('Tambang Transport Abadi')
             ->favicon(asset('favicon.ico'))
             ->colors([
-                'primary' => Color::Amber,
-                'gray' => Color::Stone,
+                // Mode terang: biru korporat. Mode gelap menukar primary ke amber lewat tta-theme.css.
+                'primary' => Color::hex('#1D4ED8'),
+                'gray' => Color::Slate,
                 'info' => Color::Blue,
-                'success' => Color::Emerald,
-                'warning' => Color::Orange,
-                'danger' => Color::Rose,
+                'success' => Color::Green,
+                'warning' => Color::Amber,
+                'danger' => Color::Red,
             ])
-            ->font('Public Sans')
+            ->defaultThemeMode(ThemeMode::Light)
+            ->font('Source Sans 3')
             ->maxContentWidth(MaxWidth::Full)
             ->sidebarCollapsibleOnDesktop()
             ->navigationGroups([

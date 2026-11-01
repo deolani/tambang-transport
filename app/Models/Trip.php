@@ -19,9 +19,9 @@ class Trip extends Model
 
     public const STATUS_COLORS = [
         'draft' => 'gray',
-        'verified' => 'success',
-        'invoiced' => 'info',
-        'paid' => 'warning',
+        'verified' => 'info',
+        'invoiced' => 'warning',
+        'paid' => 'success',
     ];
 
     protected $guarded = [];
@@ -34,9 +34,11 @@ class Trip extends Model
         'amount' => 'decimal:2',
         'distance_km' => 'decimal:2',
         'fuel_liters' => 'decimal:2',
+        'fuel_actual_liters' => 'decimal:2',
         'fuel_price' => 'decimal:2',
         'fuel_cost' => 'decimal:2',
         'allowance' => 'decimal:2',
+        'driver_bonus' => 'decimal:2',
         'hpp' => 'decimal:2',
     ];
 
@@ -53,6 +55,9 @@ class Trip extends Model
             // Nilai trip yang sudah ditagih tidak dihitung ulang.
             if (in_array($trip->getOriginal('status'), ['invoiced', 'paid'], true)) {
                 return;
+            }
+            if ($trip->isDirty(['unit_id', 'trip_date'])) {
+                $trip->ensureUnitAvailable();
             }
             $trip->recalculate();
         });
@@ -81,18 +86,51 @@ class Trip extends Model
             ]);
         }
 
+        $fuelPrice = FuelPrice::priceOn($this->trip_date);
+        if ($fuelPrice <= 0) {
+            throw ValidationException::withMessages([
+                'data.trip_date' => 'Harga solar belum ada untuk tanggal trip. Isi dulu di Master Data > Harga Solar.',
+            ]);
+        }
+
         $calc = static::calculate(
             (float) $this->tonnage,
             $tariff,
             $route,
-            FuelPrice::priceOn($this->trip_date),
+            $fuelPrice,
+            Driver::find($this->driver_id),
         );
 
         $this->fill($calc);
     }
 
+    /** Unit tidak boleh dipakai di tanggal ia sedang breakdown atau berstatus nonaktif. */
+    public function ensureUnitAvailable(): void
+    {
+        $unit = Unit::find($this->unit_id);
+        if (! $unit) {
+            return;
+        }
+        if ($unit->status === 'nonaktif') {
+            throw ValidationException::withMessages(['data.unit_id' => "Unit {$unit->code} berstatus nonaktif."]);
+        }
+        if ($bd = $unit->breakdownOn($this->trip_date)) {
+            throw ValidationException::withMessages([
+                'data.unit_id' => "Unit {$unit->code} sedang breakdown pada tanggal ini ({$bd->number}: {$bd->description}).",
+            ]);
+        }
+    }
+
+    /** Premi sopir per trip menurut skema di master Sopir. */
+    public static function driverBonus(?Driver $driver, float $tonnage): float
+    {
+        $rate = (float) ($driver?->bonus_rate ?? 0);
+
+        return round(($driver?->bonus_scheme === 'ton') ? $rate * $tonnage : $rate, 2);
+    }
+
     /** Dipakai juga oleh form untuk pratinjau hitungan. */
-    public static function calculate(float $tonnage, ?Tariff $tariff, ?HaulRoute $route, float $fuelPrice): array
+    public static function calculate(float $tonnage, ?Tariff $tariff, ?HaulRoute $route, float $fuelPrice, ?Driver $driver = null): array
     {
         $rate = (float) ($tariff?->rate ?? 0);
         $basis = $tariff?->unit_basis ?? 'ton';
@@ -101,6 +139,7 @@ class Trip extends Model
         $liters = (float) ($route?->std_fuel_liters ?? 0);
         $fuelCost = round($liters * $fuelPrice, 2);
         $allowance = (float) ($route?->allowance ?? 0);
+        $bonus = static::driverBonus($driver, $tonnage);
 
         return [
             'rate_basis' => $basis,
@@ -111,7 +150,8 @@ class Trip extends Model
             'fuel_price' => $fuelPrice,
             'fuel_cost' => $fuelCost,
             'allowance' => $allowance,
-            'hpp' => $fuelCost + $allowance,
+            'driver_bonus' => $bonus,
+            'hpp' => $fuelCost + $allowance + $bonus,
         ];
     }
 

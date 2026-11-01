@@ -2,6 +2,8 @@
 
 namespace App\Providers;
 
+use Filament\Support\Assets\Css;
+use Filament\Support\Facades\FilamentAsset;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\ServiceProvider;
 
@@ -17,5 +19,10 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Carbon::setLocale(config('app.locale', 'id'));
+
+        // Tema warna perusahaan (merah) untuk panel; terbit ke public/ lewat `php artisan filament:assets`.
+        FilamentAsset::register([
+            Css::make('tta-theme', resource_path('css/tta-theme.css')),
+        ]);
     }
 }

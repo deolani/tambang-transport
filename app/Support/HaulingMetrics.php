@@ -15,7 +15,7 @@ use Illuminate\Support\Collection;
  * memakai rumus yang sama.
  *
  *   Revenue  = Σ tonase × tarif
- *   HPP      = Σ (solar × harga solar + uang jalan) + biaya breakdown
+ *   HPP      = Σ (solar × harga solar + uang jalan + premi sopir) + biaya breakdown
  *   Profit   = Revenue − HPP
  */
 class HaulingMetrics
@@ -26,7 +26,8 @@ class HaulingMetrics
 
     public function __construct($from = null, $to = null, public ?int $customerId = null)
     {
-        $this->from = Carbon::parse($from ?? now()->startOfMonth())->startOfDay();
+        // Bawaan 30 hari terakhir supaya dashboard tidak kosong di awal bulan.
+        $this->from = Carbon::parse($from ?? now()->subDays(29))->startOfDay();
         $this->to = Carbon::parse($to ?? now())->endOfDay();
     }
 
@@ -58,6 +59,45 @@ class HaulingMetrics
         return fn (Builder $q) => $q->whereBetween($q->qualifyColumn('started_at'), [$this->from, $this->to]);
     }
 
+    /** @var array<int, float>|null */
+    protected ?array $breakdownCostCache = null;
+
+    /** Biaya breakdown per unit untuk periode ini (sudah dibagi per customer bila difilter). */
+    public function breakdownCosts(): array
+    {
+        return $this->breakdownCostCache ??= static::breakdownCostsBetween($this->from, $this->to, $this->customerId);
+    }
+
+    /**
+     * Biaya breakdown per unit. Biaya perbaikan tidak terikat customer, jadi saat
+     * difilter satu customer biaya tiap unit dibagi menurut porsi rit customer itu
+     * pada unit tersebut di periode yang sama. Unit tanpa rit customer itu = 0.
+     *
+     * @return array<int, float> unit_id => biaya
+     */
+    public static function breakdownCostsBetween(Carbon $from, Carbon $to, ?int $customerId = null): array
+    {
+        $costs = Breakdown::query()->whereBetween('started_at', [$from, $to])
+            ->groupBy('unit_id')->selectRaw('unit_id, sum(cost) as total')
+            ->pluck('total', 'unit_id')->map(fn ($v) => (float) $v);
+
+        if (! $customerId || $costs->isEmpty()) {
+            return $costs->all();
+        }
+
+        $rit = fn (?int $customer) => Trip::query()->where('status', '!=', 'draft')
+            ->whereDate('trip_date', '>=', $from->toDateString())->whereDate('trip_date', '<=', $to->toDateString())
+            ->whereIn('unit_id', $costs->keys())
+            ->when($customer, fn ($q) => $q->where('customer_id', $customer))
+            ->groupBy('unit_id')->selectRaw('unit_id, count(*) as n')->pluck('n', 'unit_id');
+        $all = $rit(null);
+        $mine = $rit($customerId);
+
+        return $costs->map(fn ($cost, $unitId) => ($all[$unitId] ?? 0) > 0
+            ? round($cost * ($mine[$unitId] ?? 0) / $all[$unitId], 2)
+            : 0.0)->all();
+    }
+
     public function trips(): Builder
     {
         return Trip::query()->where($this->tripScope());
@@ -69,11 +109,11 @@ class HaulingMetrics
         $row = $this->trips()->selectRaw(
             'count(*) as rit, coalesce(sum(tonnage),0) as tonnage, coalesce(sum(amount),0) as revenue,
              coalesce(sum(hpp),0) as hpp_trip, coalesce(sum(fuel_cost),0) as fuel_cost,
-             coalesce(sum(allowance),0) as allowance, coalesce(sum(fuel_liters),0) as fuel_liters,
-             coalesce(sum(distance_km),0) as km'
+             coalesce(sum(allowance),0) as allowance, coalesce(sum(driver_bonus),0) as driver_bonus,
+             coalesce(sum(fuel_liters),0) as fuel_liters, coalesce(sum(distance_km),0) as km'
         )->first();
 
-        $bdCost = (float) Breakdown::query()->where($this->breakdownScope())->sum('cost');
+        $bdCost = (float) array_sum($this->breakdownCosts());
 
         $rit = (int) $row->rit;
         $tonnage = (float) $row->tonnage;
@@ -87,6 +127,7 @@ class HaulingMetrics
             'revenue' => $revenue,
             'fuel_cost' => (float) $row->fuel_cost,
             'allowance' => (float) $row->allowance,
+            'driver_bonus' => (float) $row->driver_bonus,
             'fuel_liters' => (float) $row->fuel_liters,
             'km' => (float) $row->km,
             'breakdown_cost' => $bdCost,
@@ -125,8 +166,8 @@ class HaulingMetrics
             ->withSum(['trips as fuel_liters_sum' => $scope], 'fuel_liters')
             ->withSum(['trips as fuel_cost_sum' => $scope], 'fuel_cost')
             ->withSum(['trips as allowance_sum' => $scope], 'allowance')
+            ->withSum(['trips as driver_bonus_sum' => $scope], 'driver_bonus')
             ->withSum(['trips as amount_sum' => $scope], 'amount')
-            ->withSum(['breakdowns as bd_cost_sum' => $this->breakdownScope()], 'cost')
             ->addSelect(['days_running' => Trip::query()
                 ->selectRaw('count(distinct trip_date)')
                 ->whereColumn('trips.unit_id', 'units.id')
@@ -137,16 +178,22 @@ class HaulingMetrics
     /** Baris performa per unit, urut profit terbesar. */
     public function perUnit(): Collection
     {
-        return $this->unitQuery()->get()->map(fn (Unit $u) => static::unitRow($u))
+        return $this->unitQuery()->get()->map(fn (Unit $u) => $this->row($u))
             ->sortByDesc('profit')->values();
     }
 
-    public static function unitRow(Unit $u): array
+    /** Baris performa satu unit dengan biaya breakdown periode ini. */
+    public function row(Unit $u): array
+    {
+        return static::unitRow($u, $this->breakdownCosts()[$u->id] ?? 0.0);
+    }
+
+    public static function unitRow(Unit $u, float $breakdownCost = 0.0): array
     {
         $ton = (float) $u->tonnage_sum;
         $km = (float) $u->km_sum;
         $fuelCost = (float) $u->fuel_cost_sum;
-        $hpp = $fuelCost + (float) $u->allowance_sum + (float) $u->bd_cost_sum;
+        $hpp = $fuelCost + (float) $u->allowance_sum + (float) $u->driver_bonus_sum + $breakdownCost;
         $revenue = (float) $u->amount_sum;
 
         return [
@@ -178,14 +225,13 @@ class HaulingMetrics
             $q->where('customer_id', $this->customerId);
         }
         $trips = $q->get(['trip_date', 'amount', 'hpp']);
-        $bds = Breakdown::whereBetween('started_at', [$start, $end])->get(['started_at', 'cost']);
 
         $labels = $revenue = $hpp = $profit = [];
         for ($m = $start->copy(); $m <= $end; $m->addMonth()) {
             $key = $m->format('Y-m');
             $rev = (float) $trips->filter(fn ($t) => $t->trip_date->format('Y-m') === $key)->sum('amount');
             $cost = (float) $trips->filter(fn ($t) => $t->trip_date->format('Y-m') === $key)->sum('hpp')
-                + (float) $bds->filter(fn ($b) => $b->started_at->format('Y-m') === $key)->sum('cost');
+                + array_sum(static::breakdownCostsBetween($m->copy()->startOfMonth(), $m->copy()->endOfMonth(), $this->customerId));
             $labels[] = $m->translatedFormat('M Y');
             $revenue[] = round($rev);
             $hpp[] = round($cost);
@@ -227,7 +273,7 @@ class HaulingMetrics
     {
         $buckets = ['Belum jatuh tempo' => 0, '1–30 hari' => 0, '31–60 hari' => 0, '> 60 hari' => 0];
 
-        Invoice::where('status', '!=', 'lunas')->get()->each(function (Invoice $inv) use (&$buckets) {
+        Invoice::open()->get()->each(function (Invoice $inv) use (&$buckets) {
             $late = (int) $inv->due_date->diffInDays(now(), false);
             $key = match (true) {
                 $late <= 0 => 'Belum jatuh tempo',

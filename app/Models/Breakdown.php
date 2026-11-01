@@ -25,9 +25,11 @@ class Breakdown extends Model
     {
         static::creating(function (Breakdown $bd) {
             if (blank($bd->number)) {
+                // Lanjut dari nomor terakhir (bukan jumlah data) agar tidak bentrok setelah ada yang dihapus.
                 $prefix = 'BD-'.Carbon::parse($bd->started_at ?? now())->format('Ymd').'-';
-                $count = static::where('number', 'like', $prefix.'%')->count();
-                $bd->number = $prefix.str_pad((string) ($count + 1), 2, '0', STR_PAD_LEFT);
+                $last = static::where('number', 'like', $prefix.'%')->orderByDesc('number')->value('number');
+                $seq = $last ? ((int) substr($last, strlen($prefix))) + 1 : 1;
+                $bd->number = $prefix.str_pad((string) $seq, 2, '0', STR_PAD_LEFT);
             }
         });
 

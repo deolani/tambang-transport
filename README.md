@@ -125,7 +125,7 @@ Trip VERIFIED hanya bisa diedit Owner. Membatalkan invoice mengembalikan trip ke
 |---|---|
 | Revenue | tonase × tarif per ton |
 | Biaya solar | solar standar rute × harga solar per liter |
-| HPP | biaya solar + uang jalan (+ biaya breakdown di periode) |
+| HPP | biaya solar + uang jalan + premi sopir (+ biaya breakdown di periode) |
 | Profit | revenue − HPP |
 | HPP/ton, Solar/ton, Ton/KM | dibagi tonase / KM |
 | Hari jalan | jumlah tanggal unik unit punya trip |
@@ -143,12 +143,30 @@ revenue Rp 84.392.964 · HPP Rp 34.048.000 · 32 rit · 1.378,97 ton.
 | `app/Filament/Resources/` | Menu & form setiap modul |
 | `app/Filament/Pages/ImportData.php` | Halaman upload / import |
 | `app/Imports/Importers/` | Aturan import per jenis data (kolom, pencocokan, validasi) |
-| `database/seeders/DatabaseSeeder.php` | Data contoh (silakan hapus/ganti) |
+| `database/seeders/UserSeeder.php` | Akun awal (dipakai `db:seed` bawaan) |
+| `database/seeders/SampleDataSeeder.php` | Data contoh lengkap (silakan ubah/ganti) |
 
-Mengisi ulang data contoh dari nol: `php artisan migrate:fresh --seed` (**menghapus semua data**).
+## Mengisi database
+
+Kedua perintah `migrate:fresh` di bawah **menghapus semua data** lalu membuat tabel dari nol.
+
+| Kebutuhan | Perintah |
+|---|---|
+| Mulai kosong, hanya akun user | `php artisan migrate:fresh --seed` |
+| Isi data contoh lengkap | `php artisan migrate:fresh --seeder=SampleDataSeeder` |
+| Tambah akun awal tanpa menghapus data | `php artisan db:seed` |
+
+Akun yang dibuat: `superadmin@`, `owner@`, `admin@`, `checker@`, `keuangan@tta.test`, password `password`.
+
+Isi data contoh (15 Sep – 31 Okt 2026):
+- 8 unit (1 nonaktif), 7 sopir (Rahmat dengan premi per ton), 2 customer (WHL per ton, BCT borongan per rit),
+  2 rute, harga solar naik per 15 Okt.
+- ±370 trip: Lunas, Ditagih, Verified belum ditagih, dan Draft 29–31 Okt; sebagian berisi solar aktual.
+- 4 breakdown (DT 1503 masih proses), 5 invoice: lunas, dibayar sebagian, belum lunas, lewat jatuh tempo, batal.
 
 ## Nanti saat upload ke Hostinger
 
 Hosting web Hostinger (Premium/Business) memakai **MySQL**, bukan PostgreSQL. Kode ini memakai query standar
 Laravel, jadi cukup buat database MySQL di hPanel lalu ubah `.env`: `DB_CONNECTION=mysql` dan `DB_PORT=3306`,
-kemudian `php artisan migrate --seed`. Arahkan domain/subdomain ke folder `public`.
+kemudian `php artisan migrate --seed` (hanya akun; tambahkan `--seeder=SampleDataSeeder` bila ingin data contoh).
+Arahkan domain/subdomain ke folder `public`.

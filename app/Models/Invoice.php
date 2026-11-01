@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -14,12 +15,14 @@ class Invoice extends Model
         'belum_lunas' => 'Belum Lunas',
         'sebagian' => 'Dibayar Sebagian',
         'lunas' => 'Lunas',
+        'batal' => 'Batal',
     ];
 
     public const STATUS_COLORS = [
-        'belum_lunas' => 'danger',
-        'sebagian' => 'warning',
+        'belum_lunas' => 'warning',
+        'sebagian' => 'info',
         'lunas' => 'success',
+        'batal' => 'gray',
     ];
 
     protected $guarded = [];
@@ -37,7 +40,49 @@ class Invoice extends Model
         'pph_amount' => 'decimal:2',
         'total' => 'decimal:2',
         'paid_amount' => 'decimal:2',
+        'cancelled_at' => 'datetime',
     ];
+
+    /** Invoice yang masih punya piutang (bukan lunas, bukan batal). */
+    public function scopeOpen(Builder $q): Builder
+    {
+        return $q->whereIn('status', ['belum_lunas', 'sebagian']);
+    }
+
+    /** Persentase pajak awal untuk customer ini (lihat config/hauling.php). */
+    public static function defaultTaxes(?Customer $customer): array
+    {
+        return [
+            'ppn_percent' => config('hauling.company_is_pkp') ? config('hauling.ppn_percent') : 0,
+            'pph_percent' => $customer?->is_pkp ? config('hauling.pph23_percent') : 0,
+        ];
+    }
+
+    /** Pajak dibulatkan ke rupiah penuh. */
+    public static function tax(float $base, float $percent): float
+    {
+        return round($base * $percent / 100);
+    }
+
+    /** Batalkan invoice yang belum dibayar: trip kembali VERIFIED, invoice tetap tercatat. */
+    public function cancel(string $reason): void
+    {
+        DB::transaction(function () use ($reason) {
+            $fresh = static::query()->lockForUpdate()->findOrFail($this->id);
+            if ($fresh->status === 'batal' || (float) $fresh->payments()->sum('amount') > 0) {
+                throw new \RuntimeException('Invoice sudah dibatalkan atau sudah ada pembayaran.');
+            }
+
+            Trip::where('invoice_id', $this->id)->update(['status' => 'verified', 'invoice_id' => null]);
+
+            $this->forceFill([
+                'status' => 'batal',
+                'cancelled_at' => now(),
+                'cancelled_by' => auth()->id(),
+                'cancel_reason' => $reason,
+            ])->save();
+        });
+    }
 
     public static function nextNumber($date): string
     {
@@ -67,8 +112,8 @@ class Invoice extends Model
 
             $customer = Customer::findOrFail($data['customer_id']);
             $subtotal = (float) $trips->sum('amount');
-            $ppn = round($subtotal * (float) ($data['ppn_percent'] ?? 0) / 100, 2);
-            $pph = round($subtotal * (float) ($data['pph_percent'] ?? 0) / 100, 2);
+            $ppn = static::tax($subtotal, (float) ($data['ppn_percent'] ?? 0));
+            $pph = static::tax($subtotal, (float) ($data['pph_percent'] ?? 0));
 
             $invoice = static::create([
                 'number' => static::nextNumber($data['issue_date']),
@@ -100,6 +145,9 @@ class Invoice extends Model
     /** Hitung ulang total pembayaran dan status. */
     public function refreshPaymentStatus(): void
     {
+        if ($this->status === 'batal') {
+            return;
+        }
         $paid = (float) $this->payments()->sum('amount');
         $status = $paid <= 0 ? 'belum_lunas' : ($paid + 0.5 >= (float) $this->total ? 'lunas' : 'sebagian');
 
@@ -116,6 +164,11 @@ class Invoice extends Model
     public function customer(): BelongsTo
     {
         return $this->belongsTo(Customer::class);
+    }
+
+    public function cancelledBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'cancelled_by');
     }
 
     public function trips(): HasMany

@@ -26,7 +26,7 @@ class AlertsWidget extends Widget
 
     protected static ?int $sort = 9;
 
-    protected int|string|array $columnSpan = ['default' => 'full', 'md' => 1, 'xl' => 2];
+    protected int|string|array $columnSpan = 'full';
 
     protected function getViewData(): array
     {
@@ -63,7 +63,7 @@ class AlertsWidget extends Widget
             $alerts[] = ['warning', 'heroicon-o-fire', 'HPP/ton > 5% di atas rata-rata ('.M::rupiah($avg).'): '.$costly->join(', '), null];
         }
 
-        $overdue = Invoice::where('status', '!=', 'lunas')->whereDate('due_date', '<', now()->toDateString())->get();
+        $overdue = Invoice::open()->whereDate('due_date', '<', now()->toDateString())->get();
         if ($overdue->isNotEmpty()) {
             $alerts[] = ['danger', 'heroicon-o-banknotes',
                 $overdue->count().' invoice lewat jatuh tempo, total '.M::rupiah($overdue->sum(fn ($i) => $i->outstanding), true),

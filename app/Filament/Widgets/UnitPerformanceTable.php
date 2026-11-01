@@ -4,7 +4,6 @@ namespace App\Filament\Widgets;
 
 use App\Filament\Widgets\Concerns\UsesMetrics;
 use App\Models\Unit;
-use App\Support\HaulingMetrics;
 use App\Support\HaulingMetrics as M;
 use Filament\Tables;
 use Filament\Tables\Table;
@@ -24,7 +23,8 @@ class UnitPerformanceTable extends TableWidget
 
     public function table(Table $table): Table
     {
-        $row = fn (Unit $record) => HaulingMetrics::unitRow($record);
+        $metrics = $this->metrics();
+        $row = fn (Unit $record) => $metrics->row($record);
 
         return $table
             ->query(fn () => $this->metrics()->unitQuery()->orderByDesc('amount_sum'))

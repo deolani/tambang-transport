@@ -7,12 +7,12 @@ use Filament\Support\RawJs;
 
 trait UsesMetrics
 {
-    // Palet kategori (sudah dicek aman untuk buta warna):
-    public const C_REVENUE = '#2563C9';   // biru
+    // Palet kategori: biru, amber, hijau (beda terang-gelap, bukan hanya warna):
+    public const C_REVENUE = '#1D4ED8';   // biru korporat
 
-    public const C_HPP = '#F0A030';       // kuning-oranye
+    public const C_HPP = '#F59E0B';       // amber
 
-    public const C_PROFIT = '#1A9A8A';    // hijau toska
+    public const C_PROFIT = '#15803D';    // hijau
 
     protected function metrics(): HaulingMetrics
     {

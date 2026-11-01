@@ -32,7 +32,7 @@ class DailyTonnageChart extends ChartWidget
                 'label' => 'Tonase',
                 'data' => $d['values'],
                 'borderColor' => self::C_REVENUE,
-                'backgroundColor' => 'rgba(37,99,201,0.15)',
+                'backgroundColor' => 'rgba(29,78,216,0.12)',
                 'fill' => true,
                 'tension' => 0.35,
                 'borderWidth' => 2,

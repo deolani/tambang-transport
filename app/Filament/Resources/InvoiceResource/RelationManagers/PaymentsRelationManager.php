@@ -25,7 +25,10 @@ class PaymentsRelationManager extends RelationManager
         return $form->schema([
             Forms\Components\DatePicker::make('paid_at')->label('Tanggal bayar')->default(now())->required()->native(false),
             Forms\Components\TextInput::make('amount')->label('Jumlah')->numeric()->prefix('Rp')->required()
-                ->default(fn () => $this->getOwnerRecord()->outstanding),
+                ->default(fn () => $this->getOwnerRecord()->outstanding)
+                ->minValue(1)
+                ->maxValue(fn (?Payment $record) => Payment::maxAmount($this->getOwnerRecord(), $record))
+                ->validationMessages(['max' => 'Melebihi sisa tagihan invoice (Rp :max).']),
             Forms\Components\Select::make('method')->label('Metode')->options(Payment::METHODS)->default('transfer')->required(),
             Forms\Components\TextInput::make('reference')->label('No referensi / bukti'),
             Forms\Components\Textarea::make('notes')->label('Catatan')->rows(2)->columnSpanFull(),
@@ -44,7 +47,8 @@ class PaymentsRelationManager extends RelationManager
                 Tables\Columns\TextColumn::make('reference')->label('Referensi'),
             ])
             ->headerActions([
-                Tables\Actions\CreateAction::make()->label('Catat Pembayaran'),
+                Tables\Actions\CreateAction::make()->label('Catat Pembayaran')
+                    ->visible(fn () => in_array($this->getOwnerRecord()->status, ['belum_lunas', 'sebagian'], true)),
             ])
             ->actions([
                 Tables\Actions\DeleteAction::make(),

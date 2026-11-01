@@ -38,12 +38,13 @@ class HppCompositionChart extends ChartWidget
             'labels' => [
                 'Solar '.$pct($t['fuel_cost']),
                 'Uang jalan '.$pct($t['allowance']),
+                'Premi sopir '.$pct($t['driver_bonus']),
                 'Perbaikan '.$pct($t['breakdown_cost']),
             ],
             'datasets' => [[
                 'label' => 'HPP',
-                'data' => [round($t['fuel_cost']), round($t['allowance']), round($t['breakdown_cost'])],
-                'backgroundColor' => [self::C_REVENUE, self::C_HPP, self::C_PROFIT],
+                'data' => [round($t['fuel_cost']), round($t['allowance']), round($t['driver_bonus']), round($t['breakdown_cost'])],
+                'backgroundColor' => [self::C_REVENUE, self::C_HPP, self::C_PROFIT, '#A1A1AA'],
                 'borderColor' => 'rgba(255,255,255,0.9)',
                 'borderWidth' => 2,
                 'hoverOffset' => 6,
